@@ -21,43 +21,67 @@ const processLobbyInfo = async (lobbyId, players, sendResponse) => {
 
   processedLobbies.add(lobbyId);
 
-  const playerProfiles = await Promise.all(
-    players.map((player) => processPlayerProfile(player))
-  );
+  if (!players || !Array.isArray(players)) {
+    console.error("Invalid players data:", players);
+    sendResponse({ error: "Invalid players data" });
+    return;
+  }
 
-  sendResponse({ lobbyId, players: playerProfiles });
+  try {
+    const playerProfiles = await fetchPlayerProfiles(players);
+    const lobbyRisk = playerProfiles.lobbyRisk;
+    const profilesWithRisk = playerProfiles.profiles.map((profile, index) => ({
+      ...players[index],
+      steamId: profile.steamId,
+      risk: profile.risk
+    }));
+
+    console.log(profilesWithRisk);
+    sendResponse({ lobbyId, players: profilesWithRisk, risk: lobbyRisk });
+  } catch (error) {
+    console.error("Error processing player profiles:", error);
+    sendResponse({ error: error.message });
+  }
 };
 
-const processPlayerProfile = async (player) => {
-  try {
-    const response = await fetch(player.profileUrl);
+const fetchPlayerProfiles = async (players) => {
+  const playerUrls = players.map(player => player.profileUrl);
 
-    if (response.ok) {
-      const html = await response.text();
-      const $ = cheerio.load(html);
-      const steamProfileUrl = $(".Button--steam").attr("href");
-
-      if (steamProfileUrl) {
-        const steamId = extractSteamId(steamProfileUrl);
-        const playerProfile = await fetchSteamProfile(steamId);
-        return { ...player, steamProfileUrl, ...playerProfile };
-      } else {
-        console.error(`Steam profile URL not found for ${player.name}`);
-        return { ...player, error: "Steam profile URL not found" };
+  // Obter Steam IDs a partir dos perfis Steam
+  const steamIds = await Promise.all(
+    playerUrls.map(async (profileUrl) => {
+      try {
+        const response = await fetch(profileUrl);
+        if (response.ok) {
+          const html = await response.text();
+          const $ = cheerio.load(html);
+          const steamIdUrl = $(".Button--steam").attr("href");
+          return extractSteamId(steamIdUrl);
+        } else {
+          console.error(`Failed to fetch profile for ${profileUrl}: ${response.statusText}`);
+          return null;
+        }
+      } catch (error) {
+        console.error(`Failed to fetch profile for ${profileUrl}:`, error);
+        return null;
       }
-    } else {
-      console.error(
-        `Failed to fetch profile for ${player.name}: ${response.statusText}`
-      );
-      return {
-        ...player,
-        error: `Failed to fetch profile: ${response.statusText}`,
-      };
-    }
-  } catch (error) {
-    console.error(`Failed to fetch profile for ${player.name}:`, error);
-    return { ...player, error: error.message };
-  }
+    })
+  );
+
+  // Filtrar IDs válidos
+  const validSteamIds = steamIds.filter(id => id);
+  const steamProfiles = await fetchSteamProfiles(validSteamIds);
+
+  // Associar steamId e risco aos jogadores
+  const profiles = players.map((player, index) => {
+    const steamId = steamIds[index];
+    const risk = steamProfiles.profiles[steamId] || 0; // Usa 0 como risco padrão se o ID não for encontrado
+    return { ...player, steamId, risk };
+  });
+
+  console.log(steamProfiles)
+
+  return { profiles, lobbyRisk: steamProfiles.lobbyRisk };
 };
 
 const extractSteamId = (steamProfileUrl) => {
@@ -65,25 +89,25 @@ const extractSteamId = (steamProfileUrl) => {
   return urlParts[urlParts.length - 1];
 };
 
-const fetchSteamProfile = async (steamId) => {
+const fetchSteamProfiles = async (steamIds) => {
   const options = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "User-Agent": "insomnia/9.2.0",
     },
-    body: JSON.stringify({ username: steamId }),
+    body: JSON.stringify({ usernames: steamIds }),
   };
 
   try {
     const response = await fetch(
-      "https://devlingo.up.railway.app/getUserProfile",
+      "https://devlingo.up.railway.app/getUserProfiles",
       options
     );
-    const profile = await response.json();
-    return profile;
+    const { profiles, lobbyRisk } = await response.json();
+    return { profiles, lobbyRisk };
   } catch (error) {
-    console.error(`Failed to fetch Steam profile for ID ${steamId}:`, error);
-    return { error: error.message };
+    console.error(`Failed to fetch Steam profiles:`, error);
+    return { profiles: {}, lobbyRisk: 0 };
   }
 };
