@@ -4,6 +4,9 @@ const processedLobbies = new Set();
 // Mapa para armazenar elementos processados e seus IDs
 const processedElementsMap = new Map();
 
+// Mapa para armazenar riscos calculados
+const calculatedRisksMap = new Map();
+
 // Função para inicializar o observador de mutações do DOM
 const initObserver = () => {
   createObserver("#challengeList", handleMutations);
@@ -26,11 +29,16 @@ const createObserver = (target, callback) => {
 
 // Função para processar mutações observadas no DOM
 const handleMutations = (mutationsList) => {
+  const nodesToAnalyze = [];
   mutationsList.forEach((mutation) => {
     if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
-      analyzeLobbies(Array.from(mutation.addedNodes));
+      nodesToAnalyze.push(...Array.from(mutation.addedNodes));
     }
   });
+
+  if (nodesToAnalyze.length > 0) {
+    analyzeLobbies(nodesToAnalyze);
+  }
 };
 
 // Função para obter os IDs dos jogadores a partir de um elemento
@@ -47,14 +55,11 @@ const getPlayersIds = (element) => {
 // Função para processar as informações dos desafios
 const infoChallenge = (nodes) => {
   const results = nodes.flatMap((node, index) => {
-    
     if (node instanceof Element) {
-      
       const challengeElements = node.querySelectorAll('.sidebar-item-content.sidebar-item-pending');
       const lineupElements = node.querySelectorAll('.sala-lineup > .sala-lineup-players');
-      
-      if(challengeElements.length > 0) {
-        
+
+      if (challengeElements.length > 0) {
         const titleElement = challengeElements[0].querySelector('.sidebar-item-name');
         if (!titleElement) {
           return []; // Retorna um array vazio se não houver título
@@ -65,24 +70,20 @@ const infoChallenge = (nodes) => {
           .replace(/[\W_]+/g, ' ')
           .replaceAll(' ', '_');
 
-        if (processedLobbies.has(lobbyId)) {
-          // Atualiza o elemento armazenado no mapa
-          const storedElement = processedElementsMap.get(lobbyId);
-          if (storedElement) {
-            return [{
-              playersInfo: getPlayersInfo(lineupElements),
-              lobbyId,
-              titleElement: storedElement
-            }];
-          }
-          return []; // Se a lobby já foi processada, retorna um array vazio
-        }
-
         // Adicionar ID único ao elemento HTML
         titleElement.id = `gcblobby-${lobbyId}`;
         console.log("O id foi adicionado no elemento", titleElement.id);
 
         const playersInfo = getPlayersInfo(lineupElements);
+
+        // Verificar se a lobby já foi processada e adicionar risco, se necessário
+        if (processedLobbies.has(lobbyId)) {
+          const risk = calculatedRisksMap.get(lobbyId);
+          if (risk) {
+            addRiskToElement(titleElement, risk);
+          }
+          return []; // Já processada, não precisa adicionar novamente
+        }
 
         // Marca a lobby como processada
         processedLobbies.add(lobbyId);
@@ -91,7 +92,7 @@ const infoChallenge = (nodes) => {
         return [{
           playersInfo,
           lobbyId,
-          titleElementId: titleElement.id
+          titleElement
         }];
       }
     }
@@ -104,9 +105,9 @@ const infoChallenge = (nodes) => {
 // Função para analisar os nós adicionados e extrair informações das lobbies
 const analyzeLobbies = (nodes) => {
   const challenges = infoChallenge(nodes);
-  
+
   if (challenges.length === 0) return;
-  
+
   sendToBackground(challenges);
 };
 
@@ -139,19 +140,32 @@ const sendToBackground = (challenges) => {
       players: challenge.playersInfo,
     }, (response) => {
       if (response) {
-        const element = document.getElementById(challenge.titleElementId);
-        if (element) {
-          
-          const riskElement = document.createElement('div');
-          riskElement.textContent = `Risco: ${response.risk || 'Desconhecido'}`;
-          element.appendChild(riskElement);
-          console.log(`Lobby risk added for: ${element.id}`);
+        if (challenge.titleElement) {
+          const risk = response.risk || 'Desconhecido';
+
+          // Armazena o risco calculado
+          calculatedRisksMap.set(challenge.lobbyId, risk);
+
+          // Adiciona o risco ao elemento
+          addRiskToElement(challenge.titleElement, risk);
+          console.log(`Lobby risk added for: ${challenge.titleElement.id}`);
         } else {
           console.log(`Lobby element not found for ID: ${challenge.lobbyId}`);
         }
       }
     });
   });
+};
+
+// Função para adicionar risco ao elemento
+const addRiskToElement = (element, risk) => {
+  let riskElement = element.querySelector('.risk-element');
+  if (!riskElement) {
+    riskElement = document.createElement('div');
+    riskElement.className = 'risk-element';
+    element.appendChild(riskElement);
+  }
+  riskElement.textContent = `Risco: ${risk}`;
 };
 
 // Listener para receber mensagens de outros scripts ou background.js
