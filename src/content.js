@@ -1,6 +1,9 @@
 // Conjunto para manter o controle das lobbies processadas
 const processedLobbies = new Set();
 
+// Mapa para armazenar elementos processados e seus IDs
+const processedElementsMap = new Map();
+
 // Função para inicializar o observador de mutações do DOM
 const initObserver = () => {
   createObserver("#challengeList", handleMutations);
@@ -54,7 +57,6 @@ const infoChallenge = (nodes) => {
         
         const titleElement = challengeElements[0].querySelector('.sidebar-item-name');
         if (!titleElement) {
-          // console.warn("No title element found for element:", element);
           return []; // Retorna um array vazio se não houver título
         }
 
@@ -64,26 +66,36 @@ const infoChallenge = (nodes) => {
           .replaceAll(' ', '_');
 
         if (processedLobbies.has(lobbyId)) {
+          // Atualiza o elemento armazenado no mapa
+          const storedElement = processedElementsMap.get(lobbyId);
+          if (storedElement) {
+            return [{
+              playersInfo: getPlayersInfo(lineupElements),
+              lobbyId,
+              titleElement: storedElement
+            }];
+          }
           return []; // Se a lobby já foi processada, retorna um array vazio
         }
 
         // Adicionar ID único ao elemento HTML
         titleElement.id = `gcblobby-${lobbyId}`;
-        console.log("o id foi adicionado no elemento",titleElement.id)
+        console.log("O id foi adicionado no elemento", titleElement.id);
 
         const playersInfo = getPlayersInfo(lineupElements);
 
         // Marca a lobby como processada
         processedLobbies.add(lobbyId);
+        processedElementsMap.set(lobbyId, titleElement); // Armazena o elemento processado no mapa
 
         return [{
           playersInfo,
           lobbyId,
-          titleElement
+          titleElementId: titleElement.id
         }];
       }
     }
-    return []
+    return [];
   });
 
   return results;
@@ -93,7 +105,7 @@ const infoChallenge = (nodes) => {
 const analyzeLobbies = (nodes) => {
   const challenges = infoChallenge(nodes);
   
-  if(challenges.length === 0) return;
+  if (challenges.length === 0) return;
   
   sendToBackground(challenges);
 };
@@ -127,14 +139,15 @@ const sendToBackground = (challenges) => {
       players: challenge.playersInfo,
     }, (response) => {
       if (response) {
-        const lobbyElement = document.getElementById(`gcblobby-${response.lobbyId}`);
-        if (lobbyElement) {
+        const element = document.getElementById(challenge.titleElementId);
+        if (element) {
+          
           const riskElement = document.createElement('div');
           riskElement.textContent = `Risco: ${response.risk || 'Desconhecido'}`;
-          lobbyElement.appendChild(riskElement);
-          console.log(`Lobby risk added for: gcblobby-${response.lobbyId}`)
+          element.appendChild(riskElement);
+          console.log(`Lobby risk added for: ${element.id}`);
         } else {
-          console.log(`Lobby element not found for ID: gcblobby-${response.lobbyId}`);
+          console.log(`Lobby element not found for ID: ${challenge.lobbyId}`);
         }
       }
     });
