@@ -28,6 +28,7 @@ const processLobbyInfo = async (lobbyId, players, sendResponse) => {
   }
 
   try {
+    console.log("Players ", players)
     const playerProfiles = await fetchPlayerProfiles(players);
     const lobbyRisk = playerProfiles.lobbyRisk;
     const profilesWithRisk = playerProfiles.profiles.map((profile, index) => ({
@@ -45,18 +46,27 @@ const processLobbyInfo = async (lobbyId, players, sendResponse) => {
 };
 
 const fetchPlayerProfiles = async (players) => {
-  const playerUrls = players.map(player => player.profileUrl);
 
   // Obter Steam IDs a partir dos perfis Steam
   const steamIds = await Promise.all(
-    playerUrls.map(async (profileUrl) => {
+    players.map(async ({profileUrl, id}) => {
+      
       try {
         const response = await fetch(profileUrl);
+        
+        
         if (response.ok) {
           const html = await response.text();
           const $ = cheerio.load(html);
           const steamIdUrl = $(".Button--steam").attr("href");
-          return extractSteamId(steamIdUrl);
+
+          const metrics = await fetch(`https://gamersclub.com.br/api/leaderboard/${id}?key=season_three&page=1&pageSize=20&withTopPlayers=true`)
+          const metricsData = await metrics.json()
+
+          return {
+            steamId: extractSteamId(steamIdUrl),
+            metrics: metricsData.data
+          }
         } else {
           console.error(`Failed to fetch profile for ${profileUrl}: ${response.statusText}`);
           return null;
@@ -69,8 +79,15 @@ const fetchPlayerProfiles = async (players) => {
   );
 
   // Filtrar IDs válidos
-  const validSteamIds = steamIds.filter(id => id);
-  const steamProfiles = await fetchSteamProfiles(validSteamIds);
+  const validProfiles = steamIds.filter(item => {
+    if(item.steamId) {
+      return {
+        ...item
+      }
+    }
+  });
+  console.log(JSON.stringify(validProfiles))
+  const steamProfiles = await fetchSteamProfiles(validProfiles);
 
   // Associar steamId e risco aos jogadores
   const profiles = players.map((player, index) => {
@@ -89,14 +106,14 @@ const extractSteamId = (steamProfileUrl) => {
   return urlParts[urlParts.length - 1];
 };
 
-const fetchSteamProfiles = async (steamIds) => {
+const fetchSteamProfiles = async (profiles) => {
   const options = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "User-Agent": "insomnia/9.2.0",
     },
-    body: JSON.stringify({ usernames: steamIds }),
+    body: JSON.stringify({ profiles  }),
   };
 
   try {
